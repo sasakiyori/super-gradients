@@ -144,9 +144,11 @@ class DetectionDataset(Dataset, HasPreprocessingParams, HasClassesInformation):
             raise RuntimeError(f"data_dir={data_dir} not found. Please make sure that data_dir points toward your dataset.")
 
         # Number of images that are available (regardless of ignored images)
+        # 拿到了数据集可用图片数据的数量
         n_dataset_samples = self._setup_data_source()
         if not isinstance(n_dataset_samples, int) or n_dataset_samples < 1:
             raise ValueError(f"_setup_data_source() should return the number of available samples but got {n_dataset_samples}")
+        # 最大数量截断
         n_samples = n_dataset_samples if max_num_samples is None else min(n_dataset_samples, max_num_samples)
 
         self.input_dim = ensure_is_tuple_of_two(input_dim)
@@ -169,6 +171,7 @@ class DetectionDataset(Dataset, HasPreprocessingParams, HasClassesInformation):
             )
 
         self.ignore_empty_annotations = ignore_empty_annotations
+        # TODO: 这个是做什么的？
         self.target_fields = target_fields or ["target"]
         if "target" not in self.target_fields:
             raise KeyError('"target" is expected to be in the fields to subclass but it was not included')
@@ -177,6 +180,7 @@ class DetectionDataset(Dataset, HasPreprocessingParams, HasClassesInformation):
 
         self.transforms = transforms
 
+        # output_fields有强制格式要求
         self.output_fields = output_fields or ["image", "target"]
         if len(self.output_fields) < 2 or self.output_fields[0] != "image" or self.output_fields[1] != "target":
             raise ValueError('output_fields must start with "image" and then "target", followed by any other field')
@@ -373,6 +377,8 @@ class DetectionDataset(Dataset, HasPreprocessingParams, HasClassesInformation):
         """
         sample = self.get_sample(index=index, ignore_empty_annotations=self.ignore_empty_annotations)
         sample = self.apply_transforms(sample)
+        # output_fields已经规定了第一个是image，第二个是target，剩余的是其他自定义字段
+        # 对照unpack_batch_items，返回为inputs, targets, additional_batch_items
         for field in self.output_fields:
             if field not in sample.keys():
                 raise KeyError(f"The field {field} must be present in the sample but was not found." "Please check the output fields of your transforms.")

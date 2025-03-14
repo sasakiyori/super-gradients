@@ -466,8 +466,10 @@ class Trainer:
             :param silent_mode: No verbosity
         """
         # SET THE MODEL IN training STATE
+        # 设定model的所有Module为training状态
         self.net.train()
 
+        # TODO: debug用的 到达expected_iterations后会暂停？ 默认是一个epoch
         expected_iterations = len(self.train_loader) if self.max_train_batches is None else self.max_train_batches
 
         # THE DISABLE FLAG CONTROLS WHETHER THE PROGRESS BAR IS SILENT OR PRINTS THE LOGS
@@ -488,18 +490,23 @@ class Trainer:
                 if expected_iterations <= batch_idx:
                     break
 
+                # TODO: 把批量数据送到device上？
                 batch_items = core_utils.tensor_container_to_device(batch_items, device_config.device, non_blocking=True)
+                # 返回的inputs、targets等 由Dataset的__getitem__决定
                 inputs, targets, additional_batch_items = sg_trainer_utils.unpack_batch_items(batch_items)
 
+                # prediction之前的hook
                 if self.pre_prediction_callback is not None:
                     inputs, targets = self.pre_prediction_callback(inputs, targets, batch_idx)
 
                 context.update_context(
                     batch_idx=batch_idx, inputs=inputs, target=targets, additional_batch_items=additional_batch_items, **additional_batch_items
                 )
+                # 开始训练时的hook 用户自定义 可以有很多个hook 按注册顺序调用
                 self.phase_callback_handler.on_train_batch_start(context)
 
                 # AUTOCAST IS ENABLED ONLY IF self.training_params.mixed_precision - IF enabled=False AUTOCAST HAS NO EFFECT
+                # TODO 这里autocats的作用？如何影响到模型预测和损失计算？
                 with autocast(enabled=self.training_params.mixed_precision):
                     # FORWARD PASS TO GET NETWORK'S PREDICTIONS
                     outputs = self.net(inputs)
@@ -513,6 +520,7 @@ class Trainer:
                 if not self.ddp_silent_mode and batch_idx == 0:
                     self._epoch_start_logging_values = self._get_epoch_start_logging_values()
 
+                # 反向传播
                 self._backward_step(loss, context.epoch, batch_idx, context)
 
                 # COMPUTE THE RUNNING USER METRICS AND LOSS RUNNING ITEMS. RESULT TUPLE IS THEIR CONCATENATION.
@@ -535,6 +543,7 @@ class Trainer:
 
     def _get_losses(self, outputs: torch.Tensor, targets: torch.Tensor) -> Tuple[torch.Tensor, tuple]:
         # GET THE OUTPUT OF THE LOSS FUNCTION
+        # criterion就是设置好的损失函数loss，这里相当于直接执行损失函数的forward()
         loss = self.criterion(outputs, targets)
         if isinstance(loss, tuple):
             loss, loss_logging_items = loss
@@ -619,6 +628,7 @@ class Trainer:
         :return:
         """
         # SCALER IS ENABLED ONLY IF self.training_params.mixed_precision=True
+        # 先累积梯度 反向传播
         self.scaler.scale(loss).backward()
         self.phase_callback_handler.on_train_batch_backward_end(context)
 
@@ -627,18 +637,22 @@ class Trainer:
         global_step = local_step + len(self.train_loader) * epoch
         total_steps = len(self.train_loader) * self.max_epochs
 
+        # 达到了需要的梯度累积步数
         if global_step % self.batch_accumulate == 0:
             self.phase_callback_handler.on_train_batch_gradient_step_start(context)
 
             # APPLY GRADIENT CLIPPING IF REQUIRED
+            # 如果配置了clip_grad_norm 需要进行梯度裁剪至clip_grad_norm
             if self.training_params.clip_grad_norm:
                 self.scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.training_params.clip_grad_norm)
 
             # SCALER IS ENABLED ONLY IF self.training_params.mixed_precision=True
+            # 更新参数
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
+            # 梯度清零
             self.optimizer.zero_grad()
             if self.ema:
                 self.ema_model.update(self.net, step=global_step, total_steps=total_steps)
@@ -1550,6 +1564,7 @@ class Trainer:
 
                 # CALCULATE PRECISE BATCHNORM STATS
                 if self.precise_bn:
+                    # 模型中拿取bn层 去做计算和更新
                     compute_precise_bn_stats(
                         model=self.net, loader=self.train_loader, precise_bn_batch_size=self.precise_bn_batch_size, num_gpus=get_world_size()
                     )

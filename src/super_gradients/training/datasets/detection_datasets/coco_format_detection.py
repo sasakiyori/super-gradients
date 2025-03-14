@@ -80,6 +80,7 @@ class COCOFormatDetectionDataset(DetectionDataset):
                     "Most likely this indicates an error in your all_classes_list parameter"
                 )
 
+    # 解析标签json文件 获取分类信息(all_class_names) 得到标签总数
     def _setup_data_source(self) -> int:
         """
         Parse COCO annotation file
@@ -104,6 +105,7 @@ class COCOFormatDetectionDataset(DetectionDataset):
         )
 
         self.original_classes = list(all_class_names)
+        # TODO: 这里为什么要复制一份 而且是深拷贝
         self.classes = copy.deepcopy(self.original_classes)
         self._annotations = annotations
         return len(annotations)
@@ -131,8 +133,10 @@ class COCOFormatDetectionDataset(DetectionDataset):
         height = annotation.image_height
 
         # Make a copy of the annotations, so that we can modify them
+        # 先做深拷贝，然后按图片的长宽进行裁剪
         boxes_xyxy = change_bbox_bounds_for_image_size(annotation.ann_boxes_xyxy, img_shape=(height, width), inplace=False)
         iscrowd = annotation.ann_is_crowd.copy()
+        # 这里的label其实就是分类id
         labels = annotation.ann_labels.copy()
 
         # Exclude boxes with invalid dimensions (x1 > x2 or y1 > y2)
@@ -143,6 +147,7 @@ class COCOFormatDetectionDataset(DetectionDataset):
 
         # Currently, the base class includes a feature to resize the image, so we need to resize the target as well when self.input_dim is set.
         initial_img_shape = (height, width)
+        # 计算长宽较小的缩放比例 计算最终图片大小 确保不会超出给出的imput_dim
         if self.input_dim is not None:
             scale_factor = min(self.input_dim[0] / height, self.input_dim[1] / width)
             resized_img_shape = (int(height * scale_factor), int(width * scale_factor))
@@ -204,23 +209,67 @@ def parse_coco_into_detection_annotations(
     with open(ann, "r") as f:
         coco = json.load(f)
 
+    """
+    coco格式类似于:
+    {
+        "images": [
+            {
+                "file_name": "1.jpg",
+                "height": 1088,
+                "weight": 1920,
+                "id": 1013
+            },
+            ...
+        ],
+        "annotations": [
+            {
+                "id": 1,
+                "category_id": 3,
+                "area": 46035,
+                "iscrowd": 0,
+                "image_id": 1013,
+                "bbox": [
+                    868,
+                    239,
+                    279,
+                    165
+                ]
+            },
+            ...
+        ],
+        "categories": [
+            {
+                "supercategory": "Coverall",
+                "name": "Coverall",
+                "id": 0
+            },
+            ...
+        ]
+    }
+    """
+
     # Extract class names and class ids
+    # 从categories结构中提取出所有的分类id和分类名称
     category_ids = np.array([category["id"] for category in coco["categories"]], dtype=int)
     category_names = np.array([category["name"] for category in coco["categories"]], dtype=str)
 
     # Extract box annotations
+    # 从annotations结构中提取出所有的bbox，并从xywh格式原地转为xyxy格式 展平成4列的数组 每一行是一个bbox
     ann_box_xyxy = xywh_to_xyxy_inplace(np.array([annotation["bbox"] for annotation in coco["annotations"]], dtype=np.float32).reshape(-1, 4), image_shape=None)
 
+    # 从annotations结构中提取各字段 并展平成一维数组
     ann_category_id = np.array([annotation["category_id"] for annotation in coco["annotations"]], dtype=int).reshape(-1)
     ann_iscrowd = np.array([annotation["iscrowd"] for annotation in coco["annotations"]], dtype=bool).reshape(-1)
     ann_image_ids = np.array([annotation["image_id"] for annotation in coco["annotations"]], dtype=int).reshape(-1)
 
     # Extract image stuff
+    # 从images结构中提取各字段
     img_ids = [img["id"] for img in coco["images"]]
     img_paths = [img["file_name"] if "file_name" in img else "{:012}".format(img["id"]) + ".jpg" for img in coco["images"]]
     img_width_height = [(img["width"], img["height"]) for img in coco["images"]]
 
     # Now, we can drop the annotations that belongs to the excluded classes
+    # 判断哪些分类要进行排除 计算出排除的掩膜 keep_classes_mask
     if int(class_ids_to_ignore is not None) + int(exclude_classes is not None) + int(include_classes is not None) > 1:
         raise ValueError("Only one of exclude_classes, class_ids_to_ignore or include_classes can be specified")
     elif exclude_classes is not None:
@@ -248,9 +297,11 @@ def parse_coco_into_detection_annotations(
         keep_classes_mask = None
 
     if keep_classes_mask is not None:
+        # 把分类枚举里需要去除的分类去掉
         category_ids = category_ids[keep_classes_mask]
         category_names = category_names[keep_classes_mask]
 
+        # 把annotations里需要去除的分类去掉
         keep_anns_mask = np.isin(ann_category_id, category_ids)
         ann_category_id = ann_category_id[keep_anns_mask]
 
@@ -263,6 +314,7 @@ def parse_coco_into_detection_annotations(
     category_names = category_names[order]
 
     # Remap category ids to be in range [0, num_categories)
+    # 因为可能有删除分类枚举的动作，因此重新分配id，保证id从0开始是连续的
     class_label_table = np.zeros(np.max(category_ids) + 1, dtype=int) - 1
     new_class_ids = np.arange(num_categories, dtype=int)
     class_label_table[category_ids] = new_class_ids
@@ -272,6 +324,7 @@ def parse_coco_into_detection_annotations(
     if (ann_category_id < 0).any():
         raise ValueError("Some annotations have class ids that are not in the list of classes. This probably indicates a bug in the annotation file")
 
+    # 把images和annotations的内容根据image_id组装起来
     annotations = []
 
     img_id2ann_box_xyxy = defaultdict(list)
@@ -286,6 +339,7 @@ def parse_coco_into_detection_annotations(
         if image_path_prefix is not None:
             image_path = os.path.join(image_path_prefix, image_path)
 
+        # 最终annotation是一张图一个元素。一张图里可能有多个标注，都放在一个DetectionAnnotation下了
         ann = DetectionAnnotation(
             image_id=img_id,
             image_path=image_path,
@@ -297,4 +351,5 @@ def parse_coco_into_detection_annotations(
         )
         annotations.append(ann)
 
+    # 最终返回重排序后的分类列表、图片信息列表
     return category_names, annotations
