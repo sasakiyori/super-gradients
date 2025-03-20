@@ -652,6 +652,10 @@ class PPYoloELoss(nn.Module):
         use_batched_assignment: bool = True,
     ):
         """
+        IoU: Intersection over Union
+        VFL: Varifocal Loss
+        DFL: Distribution Focal Loss
+
         :param num_classes:                Number of classes
         :param use_varifocal_loss:         Whether to use Varifocal loss for classification loss; otherwise use Focal loss
         :param classification_loss_weight: Classification loss weight

@@ -303,7 +303,7 @@ class YoloNASPoseLoss(nn.Module):
         average_losses_in_ddp: bool = False,
     ):
         """
-        :param oks_sigmas:                 OKS sigmas for pose estimation. Array of [Num Keypoints].
+        :param oks_sigmas:                 OKS sigmas for pose estimation. Array of [Num Keypoints]. OKS: Object Keypoint Similarity
         :param classification_loss_type:   Classification loss type. One of "focal" or "bce"
         :param regression_iou_loss_type:   Regression IoU loss type. One of "giou" or "ciou"
         :param classification_loss_weight: Classification loss weight
