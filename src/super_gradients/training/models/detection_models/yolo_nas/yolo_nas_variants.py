@@ -171,6 +171,7 @@ class YoloNAS_S(YoloNAS):
 @register_model(Models.YOLO_NAS_M)
 class YoloNAS_M(YoloNAS):
     def __init__(self, arch_params: Union[HpmStruct, DictConfig]):
+        # 从recipes中的yolo_nas_m_arch_params.yaml读取模型架构: backbone、neck、head
         default_arch_params = get_arch_params("yolo_nas_m_arch_params")
         merged_arch_params = HpmStruct(**copy.deepcopy(default_arch_params))
         merged_arch_params.override(**arch_params.to_dict())
